@@ -14,8 +14,8 @@
 //
 // @uwekaditz: 2019-11-02
 // NEW: more OLED sizes (128x32, 64x48) added to the original 128x64 size
-// NEW: Display button can be inverted
-// NEW: Content of header is adjustable, also the alternating function
+// NEW: Display button can be inverted (saved as Bit16 in Settings.TaskDevicePluginConfigLong[event->TaskIndex]g[0])
+// NEW: Content of header is adjustable, also the alternating function (saved as Bit 15-0 in Settings.TaskDevicePluginConfigLong[event->TaskIndex][0])
 // CHG: Parameters sorted
 
 #define PLUGIN_036
@@ -44,6 +44,7 @@
 
 static int8_t lastWiFiState = P36_WIFI_STATE_UNSET;
 static int OLEDIndex = 0;
+static boolean Pin3Invers;
 
 enum eHeaderContent {
     eSSID = 1,
@@ -186,7 +187,7 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
 
         String options8[P36_MaxSizesCount] = { F("128x64"), F("128x32"), F("64x48") };
         int optionValues8[P36_MaxSizesCount] = { 0, 1, 2 };
-        addFormSelector(F("Size"),F("p036_size"), P36_MaxSizesCount, options8, optionValues8, NULL, PCONFIG(8), true);
+        addFormSelector(F("Size"),F("p036_size"), P36_MaxSizesCount, options8, optionValues8, NULL, PCONFIG(7), true);
 
         byte choice1 = PCONFIG(1);
         String options1[2];
@@ -195,7 +196,7 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
         int optionValues1[2] = { 1, 2 };
         addFormSelector(F("Rotation"), F("p036_rotate"), 2, options1, optionValues1, choice1);
 
-        OLEDIndex=PCONFIG(8);
+        OLEDIndex=PCONFIG(7);
         addFormNumericBox(F("Lines per Frame"), F("p036_nlines"), PCONFIG(2), 1, SizeSettings[OLEDIndex].MaxLines);
 
         byte choice3 = PCONFIG(3);
@@ -216,7 +217,8 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
 
         // FIXME TD-er: Why is this using pin3 and not pin1? And why isn't this using the normal pin selection functions?
         addFormPinSelect(F("Display button"), F("taskdevicepin3"), CONFIG_PIN3);
-        addFormCheckBox(F("Inversed Logic"), F("p036_pin3invers"), PCONFIG(7));
+        Pin3Invers = ((Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0x10000) == 0x10000);  // Bit 16
+        addFormCheckBox(F("Inversed Logic"), F("p036_pin3invers"), Pin3Invers);
 
         addFormNumericBox(F("Display Timeout"), F("p036_timer"), PCONFIG(4));
 
@@ -234,8 +236,8 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
 
         addFormSubHeader(F("Content"));
 
-        byte choice9 = PCONFIG(9);
-        byte choice10 = PCONFIG(10);
+        byte choice9 = (Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0xff00) >> 8;    // Bit15-8
+        byte choice10 = Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0xff; // Bit7-0
         byte MaxHeaderOption;
         String options9[13] = { F("SSID"), F("SysName"), F("IP"), F("MAC"), F("RSSI"), F("BSSID"), F("WiFi channel"), F("Unit"), F("SysLoad"), F("SysHeap"), F("SysStack"), F("Date"), F("Time") };
         int optionValues9[13] = { eSSID, eSysName, eIP, eMAC, eRSSI, eBSSID, eWiFiCh, eUnit, eSysLoad, eSysHeap, eSysStack, eDate, eTime };
@@ -277,10 +279,11 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
         PCONFIG(4) = getFormItemInt(F("p036_timer"));
         PCONFIG(5) = getFormItemInt(F("p036_controller"));
         PCONFIG(6) = getFormItemInt(F("p036_contrast"));
-        PCONFIG(7) = isFormItemChecked(F("p036_pin3invers"));
-        PCONFIG(8) = getFormItemInt(F("p036_size"));
-        PCONFIG(9) = getFormItemInt(F("p036_header"));
-        PCONFIG(10) = getFormItemInt(F("p036_headerAlternate"));
+        PCONFIG(7) = getFormItemInt(F("p036_size"));
+        Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] = getFormItemInt(F("p036_header"))*0x100;     // Bit 15-8
+        Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] += getFormItemInt(F("p036_headerAlternate")); // Bit 7-0
+        if (isFormItemChecked(F("p036_pin3invers")))
+          Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] += 0x10000;           // Bit 16
 
         String error;
         char P036_deviceTemplate[P36_Nlines][P36_Nchars];
@@ -372,7 +375,8 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
       {
         if (CONFIG_PIN3 != -1)
         {
-          if ((!PCONFIG(7) && digitalRead(CONFIG_PIN3)) || (PCONFIG(7) && !digitalRead(CONFIG_PIN3)))
+          Pin3Invers = ((Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0x10000) == 0x10000);  // Bit 16
+          if ((!Pin3Invers && digitalRead(CONFIG_PIN3)) || (Pin3Invers && !digitalRead(CONFIG_PIN3)))
           {
             display->displayOn();
             UserVar[event->BaseVarIndex] = 1;      //  Save the fact that the display is now ON
@@ -397,9 +401,9 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
         }
         if (UserVar[event->BaseVarIndex] == 1) {
           // Display is on.
-          OLEDIndex = PCONFIG(8);
-          HeaderContent = eHeaderContent(PCONFIG(9));
-          HeaderContentAlternative = eHeaderContent(PCONFIG(10));
+          OLEDIndex = PCONFIG(7);
+          HeaderContent = eHeaderContent((Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0xff00) >> 8);     // Bit15-8
+          HeaderContentAlternative = eHeaderContent(Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0xff);   // Bit7-0
 	        display_header();	// Update Header
           if (display && display_wifibars()) {
             // WiFi symbol was updated.
@@ -425,9 +429,9 @@ boolean Plugin_036(byte function, struct EventStruct *event, String& string)
           // Display is on.
           linesPerFrame = PCONFIG(2);
           NFrames = P36_Nlines / linesPerFrame;
-          OLEDIndex = PCONFIG(8);
-          HeaderContent = eHeaderContent(PCONFIG(9));
-          HeaderContentAlternative = eHeaderContent(PCONFIG(10));
+          OLEDIndex = PCONFIG(7);
+          HeaderContent = eHeaderContent((Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0xff00) >> 8);     // Bit15-8
+          HeaderContentAlternative = eHeaderContent(Settings.TaskDevicePluginConfigLong[event->TaskIndex][0] & 0xff);   // Bit7-0
 
           //      Now create the string for the outgoing and incoming frames
           String tmpString;
